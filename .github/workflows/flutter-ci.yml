@@ -1,0 +1,47 @@
+name: Flutter CI
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'app/**'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'app/**'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Setup Flutter
+      uses: subosito/flutter-action@v2
+      with:
+        flutter-version: '3.16.0'
+        channel: 'stable'
+
+    - name: Install dependencies
+      run: |
+        cd app
+        flutter pub get
+
+    - name: Analyze code
+      run: |
+        cd app
+        flutter analyze
+
+    - name: Build APK
+      run: |
+        cd app
+        flutter build apk --release
+      continue-on-error: true
+
+    - name: Build iOS
+      run: |
+        cd app
+        flutter build ios --release --no-codesign
+      continue-on-error: true
+

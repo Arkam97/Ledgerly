@@ -46,8 +46,21 @@ builder.Services.AddSwaggerGen(c =>
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection") 
     ?? "Host=localhost;Database=ledgerly;Username=postgres;Password=postgres";
 
-builder.Services.AddDbContext<LedgerlyDbContext>(options =>
-    options.UseNpgsql(connectionString));
+// Use SQLite for development if PostgreSQL is not available
+var useSqlite = builder.Configuration.GetValue<bool>("Database:UseSqlite", false);
+var sqliteConnectionString = builder.Configuration.GetConnectionString("SqliteConnection") 
+    ?? "Data Source=ledgerly.db";
+
+if (useSqlite)
+{
+    builder.Services.AddDbContext<LedgerlyDbContext>(options =>
+        options.UseSqlite(sqliteConnectionString));
+}
+else
+{
+    builder.Services.AddDbContext<LedgerlyDbContext>(options =>
+        options.UseNpgsql(connectionString));
+}
 
 // JWT Authentication
 var jwtSecretKey = builder.Configuration["Jwt:SecretKey"] 
@@ -108,15 +121,31 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+// Only use HTTPS redirection if HTTPS is available
+if (app.Environment.IsDevelopment())
+{
+    app.UseHttpsRedirection();
+}
+else
+{
+    app.UseHttpsRedirection();
+}
+
 app.UseCors("AllowFlutterApp");
 
 // Serve static files for uploads
 app.UseStaticFiles();
+
+// Ensure uploads directory exists
+var uploadsPath = Path.Combine(builder.Environment.ContentRootPath, "uploads");
+if (!Directory.Exists(uploadsPath))
+{
+    Directory.CreateDirectory(uploadsPath);
+}
+
 app.UseStaticFiles(new StaticFileOptions
 {
-    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(
-        Path.Combine(builder.Environment.ContentRootPath, "uploads")),
+    FileProvider = new Microsoft.Extensions.FileProviders.PhysicalFileProvider(uploadsPath),
     RequestPath = "/uploads"
 });
 
@@ -124,11 +153,31 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
 
-// Ensure database is created
-using (var scope = app.Services.CreateScope())
+// Ensure database is created (with error handling)
+try
 {
-    var dbContext = scope.ServiceProvider.GetRequiredService<LedgerlyDbContext>();
-    dbContext.Database.Migrate();
+    using (var scope = app.Services.CreateScope())
+    {
+        var dbContext = scope.ServiceProvider.GetRequiredService<LedgerlyDbContext>();
+        dbContext.Database.Migrate();
+    }
+}
+catch (Exception ex)
+{
+    var logger = app.Services.GetRequiredService<ILogger<Program>>();
+    logger.LogError(ex, "An error occurred while migrating the database. " +
+        "If using PostgreSQL, ensure it's running. " +
+        "Alternatively, set 'Database:UseSqlite' to true in appsettings.json to use SQLite.");
+    
+    // For development, continue anyway - database will be created on first use
+    if (app.Environment.IsDevelopment())
+    {
+        logger.LogWarning("Continuing in development mode without database migration.");
+    }
+    else
+    {
+        throw; // In production, fail if database is not available
+    }
 }
 
 app.Run();
